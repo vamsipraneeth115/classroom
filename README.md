@@ -5,6 +5,7 @@ Complete hackathon-ready project for analyzing classroom engagement with a simul
 ## Features
 
 - Webcam-based classroom monitoring using OpenCV + MediaPipe
+- Multi-face detection with per-face labels and classroom-level summary
 - Attention state detection: `attentive`, `distracted`, `sleepy`
 - Simulated IoT LED feedback in terminal
 - MQTT-ready publishing for ESP32 on topic `classroom/alert`
@@ -40,11 +41,12 @@ classroom-analyzer/
 ### AI + Vision Layer
 
 - `main.py` opens the webcam.
-- `vision.py` uses MediaPipe Face Mesh landmarks.
+- `vision.py` uses MediaPipe Face Mesh landmarks for up to 5 faces by default.
 - Detection logic:
   - `sleepy`: low eye aspect ratio indicates eye closure
   - `distracted`: head offset suggests looking away
   - `attentive`: default when eyes are open and head is centered
+- Each detected face gets its own state, and the app also computes an aggregate classroom state for MQTT and dashboard reporting.
 - Emotion detection is a lightweight heuristic that outputs `happy`, `neutral`, or `sad`.
 
 ### IoT Layer Today
@@ -65,7 +67,7 @@ classroom-analyzer/
 ### Cloud Layer
 
 - `cloud/server.py` stores events in `classroom.db`.
-- Every event contains timestamp, attention state, emotion, and diagnostic scores.
+- The backend stores one row per detected face, grouped by frame batch, with timestamp, attention state, emotion, and diagnostic scores.
 
 ### NLP Layer
 
@@ -123,7 +125,7 @@ python main.py
 This will:
 
 - Open webcam feed
-- Show attention state and emotion on screen
+- Show per-face attention state and a classroom summary on screen
 - Print simulated LED ON/OFF messages in terminal
 - Store events in the Flask backend
 - Feed the dashboard
@@ -149,10 +151,11 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/query -ContentType
 2. Start dashboard.
 3. Start `main.py`.
 4. Face the camera normally to see `attentive`.
-5. Turn your head to one side to trigger `distracted`.
-6. Close your eyes briefly to trigger `sleepy`.
-7. Watch the terminal for simulated LED output.
-8. Confirm logs and stats appear in the dashboard.
+5. Stand with one or more people in frame to see multiple face boxes and labels.
+6. Turn one head to one side to trigger `distracted` for that face.
+7. Close one person's eyes briefly to trigger `sleepy` for that face.
+8. Watch the terminal for simulated LED output based on the classroom summary.
+9. Confirm logs and stats appear in the dashboard.
 
 ## Demo Tomorrow With ESP32
 
@@ -173,7 +176,13 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/query -ContentType
 python main.py --mqtt-mode real --mqtt-host 127.0.0.1 --mqtt-port 1883
 ```
 
-5. Python publishes `attentive`, `distracted`, or `sleepy` to `classroom/alert`.
+You can increase or decrease the face limit with:
+
+```powershell
+python main.py --max-faces 8
+```
+
+5. Python publishes the aggregate classroom state `attentive`, `distracted`, or `sleepy` to `classroom/alert`.
 6. ESP32 receives the message.
 7. GPIO 2 LED behavior:
   - `sleepy` -> ON

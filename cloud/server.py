@@ -44,10 +44,24 @@ def init_db() -> None:
                 distraction_score REAL DEFAULT 0,
                 eye_ratio REAL DEFAULT 0,
                 head_offset REAL DEFAULT 0,
-                face_found INTEGER DEFAULT 1
+                face_found INTEGER DEFAULT 1,
+                batch_id TEXT,
+                face_index INTEGER DEFAULT 0,
+                face_count INTEGER DEFAULT 1
             )
             """
         )
+        existing_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()
+        }
+        migrations = {
+            "batch_id": "ALTER TABLE events ADD COLUMN batch_id TEXT",
+            "face_index": "ALTER TABLE events ADD COLUMN face_index INTEGER DEFAULT 0",
+            "face_count": "ALTER TABLE events ADD COLUMN face_count INTEGER DEFAULT 1",
+        }
+        for column_name, sql in migrations.items():
+            if column_name not in existing_columns:
+                conn.execute(sql)
         conn.commit()
 
 
@@ -56,7 +70,8 @@ def fetch_logs(limit: int = 100) -> List[Dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT timestamp, attention_state, emotion, sleepy_score,
-                   distraction_score, eye_ratio, head_offset, face_found
+                   distraction_score, eye_ratio, head_offset, face_found,
+                   batch_id, face_index, face_count
             FROM events
             ORDER BY id DESC
             LIMIT ?
@@ -68,11 +83,17 @@ def fetch_logs(limit: int = 100) -> List[Dict[str, Any]]:
 
 def compute_summary() -> Dict[str, Any]:
     with get_connection() as conn:
-        total = conn.execute("SELECT COUNT(*) AS count FROM events").fetchone()["count"]
+        total = conn.execute(
+            "SELECT COUNT(*) AS count FROM events WHERE face_found = 1"
+        ).fetchone()["count"]
+        no_face_frames = conn.execute(
+            "SELECT COUNT(*) AS count FROM events WHERE face_found = 0"
+        ).fetchone()["count"]
         state_rows = conn.execute(
             """
             SELECT attention_state, COUNT(*) AS count
             FROM events
+            WHERE face_found = 1
             GROUP BY attention_state
             """
         ).fetchall()
@@ -80,12 +101,14 @@ def compute_summary() -> Dict[str, Any]:
             """
             SELECT emotion, COUNT(*) AS count
             FROM events
+            WHERE face_found = 1
             GROUP BY emotion
             """
         ).fetchall()
-        current = conn.execute(
+        latest_event = conn.execute(
             """
-            SELECT timestamp, attention_state, emotion, sleepy_score, distraction_score
+            SELECT id, batch_id, timestamp, attention_state, emotion, sleepy_score, distraction_score,
+                   eye_ratio, head_offset, face_found, face_index, face_count
             FROM events
             ORDER BY id DESC
             LIMIT 1
@@ -96,9 +119,66 @@ def compute_summary() -> Dict[str, Any]:
     emotions = {row["emotion"]: row["count"] for row in emotion_rows}
     return {
         "total_events": total,
+        "no_face_frames": no_face_frames,
         "attention_counts": states,
         "emotion_counts": emotions,
-        "current": dict(current) if current else None,
+        "current": compute_current_batch(latest_event["batch_id"]) if latest_event and latest_event["batch_id"] else (dict(latest_event) if latest_event else None),
+    }
+
+
+def compute_current_batch(batch_id: str | None) -> Dict[str, Any] | None:
+    if batch_id is None:
+        return None
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT timestamp, attention_state, emotion, sleepy_score, distraction_score,
+                   eye_ratio, head_offset, face_found, face_index, face_count
+            FROM events
+            WHERE batch_id = ?
+            ORDER BY face_index ASC, id ASC
+            """,
+            (batch_id,),
+        ).fetchall()
+
+    if not rows:
+        return None
+
+    face_rows = [row for row in rows if row["face_found"]]
+    if not face_rows:
+        row = rows[0]
+        return {
+            "timestamp": row["timestamp"],
+            "attention_state": "no_face",
+            "emotion": "neutral",
+            "sleepy_score": 0.0,
+            "distraction_score": 0.0,
+            "eye_ratio": 0.0,
+            "head_offset": 0.0,
+            "face_count": 0,
+            "faces": [],
+        }
+
+    state_priority = {"sleepy": 3, "distracted": 2, "attentive": 1}
+    primary_row = max(face_rows, key=lambda row: state_priority.get(row["attention_state"], 0))
+    return {
+        "timestamp": face_rows[0]["timestamp"],
+        "attention_state": primary_row["attention_state"],
+        "emotion": primary_row["emotion"],
+        "sleepy_score": round(sum(row["sleepy_score"] for row in face_rows) / len(face_rows), 3),
+        "distraction_score": round(sum(row["distraction_score"] for row in face_rows) / len(face_rows), 3),
+        "eye_ratio": round(sum(row["eye_ratio"] for row in face_rows) / len(face_rows), 3),
+        "head_offset": round(sum(row["head_offset"] for row in face_rows) / len(face_rows), 3),
+        "face_count": len(face_rows),
+        "faces": [
+            {
+                "face_index": row["face_index"],
+                "attention_state": row["attention_state"],
+                "emotion": row["emotion"],
+            }
+            for row in face_rows
+        ],
     }
 
 
@@ -123,44 +203,80 @@ def health():
 @app.route("/api/events", methods=["POST"])
 def create_event():
     payload = request.get_json(force=True)
-    event = {
-        "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "attention_state": payload.get("attention_state", "attentive"),
-        "emotion": payload.get("emotion", "neutral"),
-        "sleepy_score": float(payload.get("sleepy_score", 0)),
-        "distraction_score": float(payload.get("distraction_score", 0)),
-        "eye_ratio": float(payload.get("eye_ratio", 0)),
-        "head_offset": float(payload.get("head_offset", 0)),
-        "face_found": 1 if payload.get("face_found", True) else 0,
-    }
+    batch_id = payload.get("batch_id") or datetime.now(UTC).isoformat(timespec="milliseconds")
+    summary = payload.get("summary", {})
+    faces = payload.get("faces", [])
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    if faces:
+        events = [
+            {
+                "timestamp": timestamp,
+                "attention_state": face.get("attention_state", "attentive"),
+                "emotion": face.get("emotion", "neutral"),
+                "sleepy_score": float(face.get("sleepy_score", 0)),
+                "distraction_score": float(face.get("distraction_score", 0)),
+                "eye_ratio": float(face.get("eye_ratio", 0)),
+                "head_offset": float(face.get("head_offset", 0)),
+                "face_found": 1 if face.get("face_found", True) else 0,
+                "batch_id": batch_id,
+                "face_index": int(face.get("face_index", index)),
+                "face_count": len(faces),
+            }
+            for index, face in enumerate(faces, start=1)
+        ]
+    else:
+        events = [
+            {
+                "timestamp": timestamp,
+                "attention_state": summary.get("attention_state", "no_face"),
+                "emotion": summary.get("emotion", "neutral"),
+                "sleepy_score": float(summary.get("sleepy_score", 0)),
+                "distraction_score": float(summary.get("distraction_score", 0)),
+                "eye_ratio": float(summary.get("eye_ratio", 0)),
+                "head_offset": float(summary.get("head_offset", 0)),
+                "face_found": 1 if summary.get("face_found", False) else 0,
+                "batch_id": batch_id,
+                "face_index": 0,
+                "face_count": int(summary.get("face_count", 0)),
+            }
+        ]
 
     with get_connection() as conn:
-        conn.execute(
+        conn.executemany(
             """
             INSERT INTO events (
                 timestamp, attention_state, emotion, sleepy_score,
-                distraction_score, eye_ratio, head_offset, face_found
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                distraction_score, eye_ratio, head_offset, face_found,
+                batch_id, face_index, face_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                event["timestamp"],
-                event["attention_state"],
-                event["emotion"],
-                event["sleepy_score"],
-                event["distraction_score"],
-                event["eye_ratio"],
-                event["head_offset"],
-                event["face_found"],
-            ),
+            [
+                (
+                    event["timestamp"],
+                    event["attention_state"],
+                    event["emotion"],
+                    event["sleepy_score"],
+                    event["distraction_score"],
+                    event["eye_ratio"],
+                    event["head_offset"],
+                    event["face_found"],
+                    event["batch_id"],
+                    event["face_index"],
+                    event["face_count"],
+                )
+                for event in events
+            ],
         )
         conn.commit()
 
+    current = compute_current_batch(batch_id)
     print(
-        f"[backend] stored event at {event['timestamp']} "
-        f"state={event['attention_state']} emotion={event['emotion']}",
+        f"[backend] stored batch at {timestamp} "
+        f"faces={len(faces)} class_state={(current or {}).get('attention_state', 'no_face')}",
         flush=True,
     )
-    return jsonify({"message": "event stored", "event": event}), 201
+    return jsonify({"message": "events stored", "event": current}), 201
 
 
 @app.route("/api/current", methods=["GET"])

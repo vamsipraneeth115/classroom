@@ -26,6 +26,7 @@ def index():
         "/api/stats",
         {
             "total_events": 0,
+            "no_face_frames": 0,
             "attention_counts": {},
             "emotion_counts": {},
             "current": None,

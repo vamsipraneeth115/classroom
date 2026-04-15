@@ -24,27 +24,34 @@ def answer_query(query: str, db_path: Path) -> Dict[str, str]:
         }
 
     if "summary" in normalized:
-        total = _fetch_value(db_path, "SELECT COUNT(*) AS count FROM events")["count"]
+        total = _fetch_value(
+            db_path,
+            "SELECT COUNT(*) AS count FROM events WHERE face_found = 1",
+        )["count"]
+        no_face = _fetch_value(
+            db_path,
+            "SELECT COUNT(*) AS count FROM events WHERE face_found = 0",
+        )["count"]
         distracted = _fetch_value(
             db_path,
-            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ?",
+            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ? AND face_found = 1",
             ("distracted",),
         )["count"]
         sleepy = _fetch_value(
             db_path,
-            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ?",
+            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ? AND face_found = 1",
             ("sleepy",),
         )["count"]
         attentive = _fetch_value(
             db_path,
-            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ?",
+            "SELECT COUNT(*) AS count FROM events WHERE attention_state = ? AND face_found = 1",
             ("attentive",),
         )["count"]
         return {
             "query": query,
             "answer": (
-                f"Summary: {total} total events. "
-                f"Attentive: {attentive}, Distracted: {distracted}, Sleepy: {sleepy}."
+                f"Summary: {total} total face detections. "
+                f"Attentive: {attentive}, Distracted: {distracted}, Sleepy: {sleepy}, No-face frames: {no_face}."
             ),
         }
 
@@ -52,19 +59,19 @@ def answer_query(query: str, db_path: Path) -> Dict[str, str]:
         if state in normalized:
             count = _fetch_value(
                 db_path,
-                "SELECT COUNT(*) AS count FROM events WHERE attention_state = ?",
+                "SELECT COUNT(*) AS count FROM events WHERE attention_state = ? AND face_found = 1",
                 (state,),
             )["count"]
             return {
                 "query": query,
-                "answer": f"The class was detected as {state} {count} times.",
+                "answer": f"{count} face detections were classified as {state}.",
             }
 
     for emotion in ("happy", "neutral", "sad"):
         if emotion in normalized:
             count = _fetch_value(
                 db_path,
-                "SELECT COUNT(*) AS count FROM events WHERE emotion = ?",
+                "SELECT COUNT(*) AS count FROM events WHERE emotion = ? AND face_found = 1",
                 (emotion,),
             )["count"]
             return {

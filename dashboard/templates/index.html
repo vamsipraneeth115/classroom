@@ -22,6 +22,7 @@
                 <h2>Current Status</h2>
                 {% if current %}
                     <div class="status-badge {{ current.attention_state }}">{{ current.attention_state }}</div>
+                    <p><strong>Faces detected:</strong> {{ current.face_count }}</p>
                     <p><strong>Emotion:</strong> {{ current.emotion }}</p>
                     <p><strong>Timestamp:</strong> {{ current.timestamp }}</p>
                     <p><strong>Sleepy score:</strong> {{ current.sleepy_score }}</p>
@@ -34,7 +35,8 @@
             <article class="card">
                 <h2>Attention Stats</h2>
                 <div class="stats-list">
-                    <div><span>Total events</span><strong>{{ stats.total_events }}</strong></div>
+                    <div><span>Total detections</span><strong>{{ stats.total_events }}</strong></div>
+                    <div><span>No-face frames</span><strong>{{ stats.no_face_frames or 0 }}</strong></div>
                     <div><span>Attentive</span><strong>{{ stats.attention_counts.get('attentive', 0) }}</strong></div>
                     <div><span>Distracted</span><strong>{{ stats.attention_counts.get('distracted', 0) }}</strong></div>
                     <div><span>Sleepy</span><strong>{{ stats.attention_counts.get('sleepy', 0) }}</strong></div>
@@ -66,12 +68,14 @@
                 <div class="log-table">
                     <div class="log-head">
                         <span>Time</span>
+                        <span>Face</span>
                         <span>State</span>
                         <span>Emotion</span>
                     </div>
                     {% for row in logs %}
                         <div class="log-row">
                             <span>{{ row.timestamp }}</span>
+                            <span class="mono">{{ row.face_index if row.face_index else "-" }}</span>
                             <span class="mono">{{ row.attention_state }}</span>
                             <span class="mono">{{ row.emotion }}</span>
                         </div>
