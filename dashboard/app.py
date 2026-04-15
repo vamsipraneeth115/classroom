@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 import requests
-from flask import Flask, render_template
+from flask import Flask, jsonify, make_response, render_template, request
 
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:5000")
@@ -40,6 +40,22 @@ def index():
         stats=stats,
         logs=logs,
     )
+
+
+@app.route("/api/query", methods=["POST"])
+def proxy_query():
+    payload = request.get_json(force=True)
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/query",
+            json=payload,
+            timeout=5,
+        )
+        response = make_response(resp.content, resp.status_code)
+        response.headers["Content-Type"] = "application/json"
+        return response
+    except requests.RequestException as exc:
+        return jsonify({"query": payload.get("query", ""), "answer": f"Backend request failed: {exc}"}), 502
 
 
 if __name__ == "__main__":

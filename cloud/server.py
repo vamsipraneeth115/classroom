@@ -25,6 +25,14 @@ app = Flask(
 )
 
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
+
+
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -296,8 +304,11 @@ def get_stats():
     return jsonify(compute_summary())
 
 
-@app.route("/api/query", methods=["POST"])
+@app.route("/api/query", methods=["OPTIONS", "POST"])
 def query():
+    if request.method == "OPTIONS":
+        return jsonify({}), 204
+
     payload = request.get_json(force=True)
     query_text = payload.get("query", "")
     answer = answer_query(query_text, DB_PATH)
