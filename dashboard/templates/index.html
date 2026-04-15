@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Classroom Engagement Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="page">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Smart Classroom Engagement Analyzer</p>
+                <h1>Live classroom attention dashboard</h1>
+                <p class="subtext">Simulated IoT today, ESP32-ready tomorrow.</p>
+            </div>
+            <div class="pill">Dashboard: http://127.0.0.1:5000</div>
+        </header>
+
+        <section class="grid">
+            <article class="card status-card">
+                <h2>Current Status</h2>
+                {% if current %}
+                    <div class="status-badge {{ current.attention_state }}">{{ current.attention_state }}</div>
+                    <p><strong>Emotion:</strong> {{ current.emotion }}</p>
+                    <p><strong>Timestamp:</strong> {{ current.timestamp }}</p>
+                    <p><strong>Sleepy score:</strong> {{ current.sleepy_score }}</p>
+                    <p><strong>Distraction score:</strong> {{ current.distraction_score }}</p>
+                {% else %}
+                    <p>No data yet. Start the backend and AI program first.</p>
+                {% endif %}
+            </article>
+
+            <article class="card">
+                <h2>Attention Stats</h2>
+                <div class="stats-list">
+                    <div><span>Total events</span><strong>{{ stats.total_events }}</strong></div>
+                    <div><span>Attentive</span><strong>{{ stats.attention_counts.get('attentive', 0) }}</strong></div>
+                    <div><span>Distracted</span><strong>{{ stats.attention_counts.get('distracted', 0) }}</strong></div>
+                    <div><span>Sleepy</span><strong>{{ stats.attention_counts.get('sleepy', 0) }}</strong></div>
+                </div>
+            </article>
+
+            <article class="card">
+                <h2>Emotion Stats</h2>
+                <div class="stats-list">
+                    <div><span>Happy</span><strong>{{ stats.emotion_counts.get('happy', 0) }}</strong></div>
+                    <div><span>Neutral</span><strong>{{ stats.emotion_counts.get('neutral', 0) }}</strong></div>
+                    <div><span>Sad</span><strong>{{ stats.emotion_counts.get('sad', 0) }}</strong></div>
+                </div>
+            </article>
+        </section>
+
+        <section class="grid lower-grid">
+            <article class="card">
+                <h2>NLP Query Console</h2>
+                <form id="query-form">
+                    <input id="query-input" type="text" placeholder="Try: Show summary">
+                    <button type="submit">Ask</button>
+                </form>
+                <pre id="query-output">Ask a question to see results here.</pre>
+            </article>
+
+            <article class="card">
+                <h2>Recent Logs</h2>
+                <div class="log-table">
+                    <div class="log-head">
+                        <span>Time</span>
+                        <span>State</span>
+                        <span>Emotion</span>
+                    </div>
+                    {% for row in logs %}
+                        <div class="log-row">
+                            <span>{{ row.timestamp }}</span>
+                            <span class="mono">{{ row.attention_state }}</span>
+                            <span class="mono">{{ row.emotion }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            </article>
+        </section>
+    </div>
+
+    <script>
+        const backendUrl = "{{ backend_url or '' }}";
+        const form = document.getElementById("query-form");
+        const input = document.getElementById("query-input");
+        const output = document.getElementById("query-output");
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const query = input.value.trim();
+            if (!query) {
+                output.textContent = "Please enter a query.";
+                return;
+            }
+
+            output.textContent = "Running query...";
+            try {
+                const response = await fetch(`${backendUrl}/api/query`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query })
+                });
+                const data = await response.json();
+                output.textContent = data.answer || JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent = `Query failed: ${error}`;
+            }
+        });
+    </script>
+</body>
+</html>

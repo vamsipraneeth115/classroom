@@ -1,0 +1,14 @@
+.venv/
+.packages/
+.tmp/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+*.log
+*.err.log
+classroom.db
+
+.DS_Store
+Thumbs.db
